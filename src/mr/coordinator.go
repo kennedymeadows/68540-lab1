@@ -2,7 +2,6 @@ package mr
 
 import (
 	"log"
-	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -36,6 +35,7 @@ type MapTask struct {
 type ReduceTask struct {
 	TaskNumber int
 	NumFiles int
+	InputFiles []string
 }
 
 func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
@@ -43,6 +43,7 @@ func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
     defer c.mu.Unlock()
 
     reply.MapTask = &MapTask{}
+	reply.ReduceTask = &ReduceTask{}
 
     // Check and assign a map task if available
     for idx, file := range c.inputFiles {
@@ -52,11 +53,20 @@ func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
 			reply.MapTask.Filename = file
 			reply.MapTask.Filenum = idx
 			reply.MapTask.NReduce = c.nReduce
-			c.mappedInputFiles[file] = true
 			return nil
 		}
     }
-	c.mapDone = true
+	
+    allMapTasksDone := true
+    for _, done := range c.mappedInputFiles {
+        if !done {
+            allMapTasksDone = false
+            break
+        }
+    }
+    if allMapTasksDone {
+        c.mapDone = true
+    }
     // If all map tasks are done, start assigning reduce tasks
     reply.MapTask = nil 
 
@@ -64,16 +74,40 @@ func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
 		if c.reduceTasks[i] {
 			continue
 		} else {
-			reply.ReduceTask = &ReduceTask{}
 			reply.ReduceTask.TaskNumber = i
 			reply.ReduceTask.NumFiles = len(c.inputFiles)
-			c.reduceTasks[i] = true
+			reply.ReduceTask.InputFiles = c.inputFiles
 			return nil
 		}
 	}
-	c.reduceDone = true
+
+	allReduceTasksDone := true
+    for _, done := range c.reduceTasks {
+        if !done {
+            allReduceTasksDone = false
+            break
+        }
+    }
+    if allReduceTasksDone {
+        c.reduceDone = true
+    }
+	
     reply.ReduceTask = nil
     return nil
+}
+
+func (c *Coordinator) CompleteMapTask(args *MapTask, reply *MapTask) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mappedInputFiles[args.Filename] = true
+	return nil
+}
+
+func (c *Coordinator) CompleteReduceTask(args *ReduceTask, reply *ReduceTask) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reduceTasks[args.TaskNumber] = true
+	return nil
 }
 
 
@@ -109,10 +143,10 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := (c.mapDone && c.reduceDone)
-	if ret {
-		fmt.Printf("All tasks are done, shutting down\n")
-	}
+	// ret := (c.isMapDone() && c.isReduceDone())
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ret := c.mapDone && c.reduceDone
 	return ret
 }
 

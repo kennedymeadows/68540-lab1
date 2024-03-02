@@ -5,9 +5,9 @@ import (
 	"hash/fnv"
 	"log"
 	"net/rpc"
-	// "time"
-	"os"
+	"time"
 	"io"
+	"os"
 	"sort"
 )
 
@@ -65,7 +65,7 @@ func appendToIntermediate(intermediate map[int] []KeyValue, kva []KeyValue, nRed
 	}
 }
 
-func reduceIntermediate(reduceTask int, numFiles int, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+func reduceIntermediate(reduceTask int, numFiles int, inputFiles []string, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	intermediate := []KeyValue{}
 	for i := 0; i < numFiles; i++ {
 		filename := fmt.Sprintf("mr-%v-%v", i, reduceTask)
@@ -78,7 +78,7 @@ func reduceIntermediate(reduceTask int, numFiles int, mapf func(string, string) 
 			log.Fatalf("cannot read %v", filename)
 		}
 		file.Close()
-		kva := mapf(filename, string(content))
+		kva := mapf(inputFiles[i], string(content))
 		intermediate = append(intermediate, kva...)
 	}
 	sort.Sort(ByKey(intermediate))
@@ -115,23 +115,27 @@ func Worker(mapf func(string, string) []KeyValue,
 		ok := call("Coordinator.CallForTask", &args, &reply)
 		if ok {
 			if reply.MapTask != nil {
-				fmt.Printf("##################\n")
-				fmt.Printf("Filename: %v\nnReduce: %v\n", reply.MapTask.Filename, reply.MapTask.NReduce)
-				fmt.Printf("##################\n")
 				kva := mapf(reply.MapTask.Filename, getFileContent(reply.MapTask.Filename))
 				intermediate := make(map[int] []KeyValue)
 				appendToIntermediate(intermediate, kva, reply.MapTask.NReduce, reply.MapTask.Filenum)
+				okComplete := call("Coordinator.CompleteMapTask", reply.MapTask, &reply.MapTask)
+				if !okComplete {
+					log.Printf("Failed to complete map task")
+				}
 			} else if reply.ReduceTask != nil {
-				fmt.Printf("##################\n")
-				fmt.Printf("Reduce task number: %v\n", reply.ReduceTask.TaskNumber)
-				fmt.Printf("##################\n")
-				reduceIntermediate(reply.ReduceTask.TaskNumber, reply.ReduceTask.NumFiles, mapf, reducef)
+				reduceIntermediate(reply.ReduceTask.TaskNumber, reply.ReduceTask.NumFiles, reply.ReduceTask.InputFiles, mapf, reducef)
+				okComplete := call("Coordinator.CompleteReduceTask", reply.ReduceTask, &reply.ReduceTask)
+				if !okComplete {
+					log.Printf("Failed to complete reduce task")
+				}
 			} else {
-				fmt.Printf("Did not receive any task\n")
 				break
 			}
+			// time.Sleep(500 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 		} else {
-			fmt.Printf("call failed!\n")
+			log.Printf("Failed to get task from coordinator")
+			time.Sleep(1 * time.Second)
 		}
 	}
 
