@@ -1,10 +1,15 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+	"time"
+	"os"
+	"io"
+	// "sort"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -12,6 +17,9 @@ import "hash/fnv"
 type KeyValue struct {
 	Key   string
 	Value string
+}
+
+type CallArgs struct {
 }
 
 //
@@ -24,6 +32,19 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func getFileContent(filename string) string {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	file.Close()
+	return string(content)
+}
+
 
 //
 // main/mrworker.go calls this function.
@@ -32,7 +53,54 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
+	for {
+		reply := CallReply{}
+		ok := call("Coordinator.CallMap", &CallArgs{}, &reply)
+		if !ok {
+			time.Sleep(time.Second)
+			continue
+		}
+		if reply.MapTask == nil && reply.ReduceTask == nil {
+			break
+		}
+		if reply.MapTask != nil {
+			fmt.Printf("##################\n")
+			fmt.Printf("Filename: %v\nnReduce: %v\n", reply.MapTask.Filename, reply.MapTask.NReduce)
+			fmt.Printf("oFile: mr-%v-%v\n", reply.MapTask.Filenum, ihash(reply.MapTask.Filename)%reply.MapTask.NReduce)
+			fmt.Printf("##################\n")
+			intermediate := mapf(reply.MapTask.Filename, getFileContent(reply.MapTask.Filename))
+			oname := fmt.Sprintf("mr-%v-%v", reply.MapTask.Filenum, ihash(reply.MapTask.Filename)%reply.MapTask.NReduce)
+			// sort.Sort(ByKey(intermediate))
+			ofile, _ := os.Create(oname)
+			i := 0
+			for i < len(intermediate) {
+				j := i + 1
+				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, intermediate[k].Value)
+				}
+				output := reducef(intermediate[i].Key, values)
+		
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+		
+				i = j
+			}
+		
+			ofile.Close()
+			
+			time.Sleep(time.Second)
+		}
+		if reply.ReduceTask != nil {
+			fmt.Printf("##################\n")
+			fmt.Printf("Filename: %v\n", reply.ReduceTask.Filename)
+			fmt.Printf("##################\n")
+			time.Sleep(time.Second)
+		}
+	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
