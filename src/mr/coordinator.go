@@ -2,11 +2,12 @@ package mr
 
 import (
 	"log"
-	// "fmt"
+	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 
@@ -15,8 +16,8 @@ type Coordinator struct {
 	nReduce int
 	inputFiles []string
 	mappedInputFiles map[string]bool
-	mappedIntermediateFiles map[int]int // map[intermediate file idx] num of input files still to map to it
 	reduceTasks map[int]bool
+	mu sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -28,7 +29,7 @@ type MapTask struct {
 }
 
 type ReduceTask struct {
-	Filename string
+	TaskNumber int
 }
 
 type CallReply struct {
@@ -36,20 +37,44 @@ type CallReply struct {
 	ReduceTask *ReduceTask
 }
 
-func (c *Coordinator) CallMap(args *CallReply, reply *CallReply) error {
-	reply.MapTask = &MapTask{}
-	for idx, file := range c.inputFiles {
-		if !c.mappedInputFiles[file] {
+func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+
+    reply.MapTask = &MapTask{}
+
+    // Check and assign a map task if available
+    for idx, file := range c.inputFiles {
+		if c.mappedInputFiles[file] {
+			continue
+		} else {
 			reply.MapTask.Filename = file
 			reply.MapTask.Filenum = idx
 			reply.MapTask.NReduce = c.nReduce
 			c.mappedInputFiles[file] = true
 			return nil
 		}
+    }
+	fmt.Printf("All map tasks are done\n")
+    // If all map tasks are done, start assigning reduce tasks
+    reply.MapTask = nil 
+
+    for i := 0; i < c.nReduce; i++ {
+		fmt.Printf("Checking reduce task %v\n", i)
+		if c.reduceTasks[i] {
+			continue
+		} else {
+			reply.ReduceTask = &ReduceTask{}
+			reply.ReduceTask.TaskNumber = i
+			c.reduceTasks[i] = true
+			return nil
+		}
 	}
-	reply.MapTask = nil
-	return nil
+	fmt.Printf("All reduce tasks are done\n")
+    reply.ReduceTask = nil
+    return nil
 }
+
 
 //
 // an example RPC handler.
@@ -105,18 +130,16 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.nReduce = nReduce
 	c.inputFiles = files
 	c.mappedInputFiles = make(map[string]bool, len(files))
-	c.mappedIntermediateFiles = make(map[int]int)
 	c.reduceTasks = make(map[int]bool)
-
+	
 	for i := 0; i < nReduce; i++ {
 		c.reduceTasks[i] = false
 	}
+
 	for _, file := range files {
 		c.mappedInputFiles[file] = false
-		reduceTask := ihash(file) % nReduce
-		c.mappedIntermediateFiles[reduceTask]++ // map[intermediate file idx] num of input files still to map to it
-		c.reduceTasks[reduceTask] = true // at least one input file will be mapped to this reduce task
 	}
+
 	c.server()
 	return &c
 }

@@ -45,6 +45,20 @@ func getFileContent(filename string) string {
 	return string(content)
 }
 
+func appendToIntermediate(intermediate map[int] []KeyValue, kva []KeyValue, nReduce int, filenum int) {
+	for _, kv := range kva {
+		intermediate[ihash(kv.Key) % nReduce] = append(intermediate[ihash(kv.Key) % 10], kv)
+	}
+	for i := 0; i < nReduce; i++ {
+		oname := fmt.Sprintf("mr-%v-%v", filenum, i)
+		ofile, _ := os.Create(oname)
+		for _, kv := range intermediate[i] {
+			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
+		}
+		ofile.Close()
+	}
+}
+
 
 //
 // main/mrworker.go calls this function.
@@ -54,55 +68,29 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// Your worker implementation here.
 	for {
+		args := CallArgs{}
 		reply := CallReply{}
-		ok := call("Coordinator.CallMap", &CallArgs{}, &reply)
-		if !ok {
-			time.Sleep(time.Second)
-			continue
-		}
-		if reply.MapTask == nil && reply.ReduceTask == nil {
-			break
-		}
-		if reply.MapTask != nil {
-			fmt.Printf("##################\n")
-			fmt.Printf("Filename: %v\nnReduce: %v\n", reply.MapTask.Filename, reply.MapTask.NReduce)
-			fmt.Printf("oFile: mr-%v-%v\n", reply.MapTask.Filenum, ihash(reply.MapTask.Filename)%reply.MapTask.NReduce)
-			fmt.Printf("##################\n")
-			intermediate := mapf(reply.MapTask.Filename, getFileContent(reply.MapTask.Filename))
-			oname := fmt.Sprintf("mr-%v-%v", reply.MapTask.Filenum, ihash(reply.MapTask.Filename)%reply.MapTask.NReduce)
-			// sort.Sort(ByKey(intermediate))
-			ofile, _ := os.Create(oname)
-			i := 0
-			for i < len(intermediate) {
-				j := i + 1
-				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-					j++
-				}
-				values := []string{}
-				for k := i; k < j; k++ {
-					values = append(values, intermediate[k].Value)
-				}
-				output := reducef(intermediate[i].Key, values)
-		
-				// this is the correct format for each line of Reduce output.
-				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-		
-				i = j
+		ok := call("Coordinator.CallForTask", &args, &reply)
+		if ok {
+			if reply.MapTask != nil {
+				fmt.Printf("##################\n")
+				fmt.Printf("Filename: %v\nnReduce: %v\n", reply.MapTask.Filename, reply.MapTask.NReduce)
+				fmt.Printf("##################\n")
+				kva := mapf(reply.MapTask.Filename, getFileContent(reply.MapTask.Filename))
+				intermediate := make(map[int] []KeyValue)
+				appendToIntermediate(intermediate, kva, reply.MapTask.NReduce, reply.MapTask.Filenum)
+			} else if reply.ReduceTask != nil {
+				fmt.Printf("##################\n")
+				fmt.Printf("Reduce task number: %v\n", reply.ReduceTask.TaskNumber)
+				fmt.Printf("##################\n")
+			} else {
+				fmt.Printf("Did not receive any task\n")
 			}
-		
-			ofile.Close()
-			
-			time.Sleep(time.Second)
+		} else {
+			fmt.Printf("call failed!\n")
 		}
-		if reply.ReduceTask != nil {
-			fmt.Printf("##################\n")
-			fmt.Printf("Filename: %v\n", reply.ReduceTask.Filename)
-			fmt.Printf("##################\n")
-			time.Sleep(time.Second)
-		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
 
 }
 
