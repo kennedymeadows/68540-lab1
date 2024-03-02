@@ -8,7 +8,7 @@ import (
 	// "time"
 	"os"
 	"io"
-	// "sort"
+	"sort"
 )
 
 //
@@ -18,6 +18,15 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -56,6 +65,42 @@ func appendToIntermediate(intermediate map[int] []KeyValue, kva []KeyValue, nRed
 	}
 }
 
+func reduceIntermediate(reduceTask int, numFiles int, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	intermediate := []KeyValue{}
+	for i := 0; i < numFiles; i++ {
+		filename := fmt.Sprintf("mr-%v-%v", i, reduceTask)
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := io.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		file.Close()
+		kva := mapf(filename, string(content))
+		intermediate = append(intermediate, kva...)
+	}
+	sort.Sort(ByKey(intermediate))
+	oname := fmt.Sprintf("mr-out-%v", reduceTask)
+	ofile, _ := os.Create(oname)
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+		i = j
+	}
+	ofile.Close()
+}
+
 
 //
 // main/mrworker.go calls this function.
@@ -80,10 +125,10 @@ func Worker(mapf func(string, string) []KeyValue,
 				fmt.Printf("##################\n")
 				fmt.Printf("Reduce task number: %v\n", reply.ReduceTask.TaskNumber)
 				fmt.Printf("##################\n")
+				reduceIntermediate(reply.ReduceTask.TaskNumber, reply.ReduceTask.NumFiles, mapf, reducef)
 			} else {
 				fmt.Printf("Did not receive any task\n")
 				break
-				// time.Sleep(200 * time.Millisecond)
 			}
 		} else {
 			fmt.Printf("call failed!\n")

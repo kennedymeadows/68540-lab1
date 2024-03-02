@@ -35,6 +35,7 @@ type MapTask struct {
 
 type ReduceTask struct {
 	TaskNumber int
+	NumFiles int
 }
 
 func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
@@ -65,6 +66,7 @@ func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
 		} else {
 			reply.ReduceTask = &ReduceTask{}
 			reply.ReduceTask.TaskNumber = i
+			reply.ReduceTask.NumFiles = len(c.inputFiles)
 			c.reduceTasks[i] = true
 			return nil
 		}
