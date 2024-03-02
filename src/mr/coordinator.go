@@ -15,8 +15,13 @@ type Coordinator struct {
 	// Your definitions here.
 	nReduce int
 	inputFiles []string
+
 	mappedInputFiles map[string]bool
 	reduceTasks map[int]bool
+
+	mapDone bool
+	reduceDone bool
+
 	mu sync.Mutex
 }
 
@@ -30,11 +35,6 @@ type MapTask struct {
 
 type ReduceTask struct {
 	TaskNumber int
-}
-
-type CallReply struct {
-	MapTask *MapTask
-	ReduceTask *ReduceTask
 }
 
 func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
@@ -55,12 +55,11 @@ func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
 			return nil
 		}
     }
-	fmt.Printf("All map tasks are done\n")
+	c.mapDone = true
     // If all map tasks are done, start assigning reduce tasks
     reply.MapTask = nil 
 
     for i := 0; i < c.nReduce; i++ {
-		fmt.Printf("Checking reduce task %v\n", i)
 		if c.reduceTasks[i] {
 			continue
 		} else {
@@ -70,7 +69,7 @@ func (c *Coordinator) CallForTask(args *CallReply, reply *CallReply) error {
 			return nil
 		}
 	}
-	fmt.Printf("All reduce tasks are done\n")
+	c.reduceDone = true
     reply.ReduceTask = nil
     return nil
 }
@@ -108,13 +107,10 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
-	for _, iFile := range c.mappedInputFiles {
-		if !iFile {
-			return ret
-		}
+	ret := (c.mapDone && c.reduceDone)
+	if ret {
+		fmt.Printf("All tasks are done, shutting down\n")
 	}
-	ret = true
 	return ret
 }
 
@@ -124,13 +120,15 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
-
-	// Your code here.
-	c.nReduce = nReduce
-	c.inputFiles = files
-	c.mappedInputFiles = make(map[string]bool, len(files))
-	c.reduceTasks = make(map[int]bool)
+	c := Coordinator{
+		nReduce: nReduce,
+		inputFiles: files,
+		mappedInputFiles: make(map[string]bool),
+		reduceTasks: make(map[int]bool),
+		mapDone: false,
+		reduceDone: false,
+		mu: sync.Mutex{},
+	}
 	
 	for i := 0; i < nReduce; i++ {
 		c.reduceTasks[i] = false

@@ -5,7 +5,7 @@ import (
 	"hash/fnv"
 	"log"
 	"net/rpc"
-	"time"
+	// "time"
 	"os"
 	"io"
 	// "sort"
@@ -17,9 +17,6 @@ import (
 type KeyValue struct {
 	Key   string
 	Value string
-}
-
-type CallArgs struct {
 }
 
 //
@@ -85,11 +82,12 @@ func Worker(mapf func(string, string) []KeyValue,
 				fmt.Printf("##################\n")
 			} else {
 				fmt.Printf("Did not receive any task\n")
+				break
+				// time.Sleep(200 * time.Millisecond)
 			}
 		} else {
 			fmt.Printf("call failed!\n")
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
 
 }
